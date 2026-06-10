@@ -90,7 +90,7 @@ def _mqtt_reader(broker: str, topic: str) -> None:
             sock = socket.create_connection((broker, 1883), timeout=10)
 
             cid = _enc_str("conveyor-web")
-            proto = _enc_str("MQTT") + bytes([4, 2, 0, 60])
+            proto = _enc_str("MQTT") + bytes([4, 2, 0, 0])   # keepalive=0(disabled)
             body = proto + cid
             sock.sendall(bytes([0x10]) + _enc_remlen(len(body)) + body)
             ack = _recvn(sock, 4)

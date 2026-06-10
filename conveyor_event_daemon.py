@@ -53,7 +53,7 @@ class MqttPublisher:
 
     def connect(self) -> None:
         cid = _enc_str(self.client_id)
-        proto = _enc_str('MQTT') + bytes([4, 2, 0, 60])   # v3.1.1, clean-session, keepalive=60s
+        proto = _enc_str('MQTT') + bytes([4, 2, 0, 0])   # v3.1.1, clean-session, keepalive=0(disabled)
         body = proto + cid
         pkt = bytes([0x10]) + _enc_remlen(len(body)) + body
 

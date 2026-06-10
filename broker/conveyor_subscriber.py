@@ -63,7 +63,7 @@ def mqtt_messages(host: str, port: int, topic: str, client_id: str = 'conveyor-s
 
             # CONNECT
             cid = _enc_str(client_id)
-            proto = _enc_str('MQTT') + bytes([4, 2, 0, 60])
+            proto = _enc_str('MQTT') + bytes([4, 2, 0, 0])   # keepalive=0(disabled)
             body = proto + cid
             sock.sendall(bytes([0x10]) + _enc_remlen(len(body)) + body)
 

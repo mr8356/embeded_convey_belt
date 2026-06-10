@@ -10,7 +10,9 @@
 
 set -euo pipefail
 
-BROKER_IP="${BROKER_IP:-192.168.106.203}"
+# Mac IP on each Pi's subnet (mosquitto listens on 0.0.0.0, both work)
+BROKER_IP_DRIVER="${BROKER_IP_DRIVER:-10.10.10.11}"
+BROKER_IP_SUBSCRIBER="${BROKER_IP_SUBSCRIBER:-10.10.11.11}"
 DRIVER_PI="${DRIVER_PI:-pi@10.10.10.12}"
 SUBSCRIBER_PI="${SUBSCRIBER_PI:-pi@10.10.11.12}"
 DRIVER_DIR="/home/pi/conveyor_node_driver"
@@ -91,7 +93,7 @@ After=network.target
 
 [Service]
 ExecStart=/usr/bin/python3 ${DRIVER_DIR}/conveyor_event_daemon.py \\
-    --broker ${BROKER_IP} --port ${MQTT_PORT} --topic ${MQTT_TOPIC}
+    --broker ${BROKER_IP_DRIVER} --port ${MQTT_PORT} --topic ${MQTT_TOPIC}
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -133,7 +135,7 @@ After=network.target
 
 [Service]
 ExecStart=/usr/bin/python3 ${SUBSCRIBER_DIR}/conveyor_subscriber.py \\
-    --broker ${BROKER_IP} --port ${MQTT_PORT} --topic ${MQTT_TOPIC}
+    --broker ${BROKER_IP_SUBSCRIBER} --port ${MQTT_PORT} --topic ${MQTT_TOPIC}
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -151,7 +153,7 @@ After=network.target
 
 [Service]
 ExecStart=/usr/bin/python3 ${SUBSCRIBER_DIR}/conveyor_web.py \\
-    --broker ${BROKER_IP} --port 8080
+    --broker ${BROKER_IP_SUBSCRIBER} --port 8080
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -183,7 +185,7 @@ echo ""
 echo "=========================================="
 echo " 배포 완료"
 echo "=========================================="
-echo "  브로커   : Mac ${BROKER_IP}:${MQTT_PORT}"
+echo "  브로커   : Mac ${BROKER_IP_DRIVER}:${MQTT_PORT} / ${BROKER_IP_SUBSCRIBER}:${MQTT_PORT}"
 echo "  퍼블리셔 : ${DRIVER_PI}  →  브로커"
 echo "  섭스크라이버: ${SUBSCRIBER_PI}  ←  브로커"
 echo "  웹 UI    : http://10.10.11.12:8080"

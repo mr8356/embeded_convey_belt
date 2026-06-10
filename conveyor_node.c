@@ -104,7 +104,9 @@ struct conveyor_node_dev {
 
 	int distance_cm;
 	int prev_distance_cm;
+	bool distance_fresh;
 	int light_value;
+	int light_ema;       /* scaled by 8: actual = light_ema >> 3 */
 	unsigned int block_streak;
 	unsigned int clear_streak;
 
@@ -151,7 +153,7 @@ static int ultra_tolerance_cm = 2;
 module_param(ultra_tolerance_cm, int, 0644);
 MODULE_PARM_DESC(ultra_tolerance_cm, "Distance stability tolerance for blockage detection");
 
-static unsigned int blockage_confirm_count = 3;
+static unsigned int blockage_confirm_count = 20; /* 20 × 200ms = 4s */
 module_param(blockage_confirm_count, uint, 0644);
 MODULE_PARM_DESC(blockage_confirm_count, "Consecutive blocked samples required");
 
@@ -361,6 +363,7 @@ static void fusion_work_fn(struct work_struct *work)
 	int distance;
 	int prev_distance;
 	int diff;
+	bool distance_fresh;
 	bool distance_stable;
 	bool light_blocked;
 	bool raw_blocked;
@@ -378,15 +381,24 @@ static void fusion_work_fn(struct work_struct *work)
 	tilt = nd->tilt;
 	distance = nd->distance_cm;
 	prev_distance = nd->prev_distance_cm;
-	if (light_value >= 0)
-		nd->light_value = light_value;
+	distance_fresh = nd->distance_fresh;
+	nd->distance_fresh = false;
+	if (light_value >= 0) {
+		if (unlikely(!nd->light_ema))
+			nd->light_ema = light_value << 3;
+		else
+			nd->light_ema = nd->light_ema - (nd->light_ema >> 3) + light_value;
+		nd->light_value = nd->light_ema >> 3;
+		light_value = nd->light_value;
+	}
 	spin_unlock_irqrestore(&nd->state_lock, flags);
 
 	diff = distance - prev_distance;
 	if (diff < 0)
 		diff = -diff;
 
-	distance_stable = distance > 0 && distance < ultra_max_dist_cm &&
+	distance_stable = distance_fresh && distance > 0 &&
+			  distance < ultra_max_dist_cm &&
 			  diff <= ultra_tolerance_cm;
 	light_blocked = light_is_blocked(light_value);
 	raw_blocked = distance_stable || light_blocked;
@@ -487,14 +499,14 @@ static irqreturn_t ultra_irq_handler(int irq, void *dev_id)
 
 	spin_lock_irqsave(&nd->data_lock, flags);
 	nd->last_echo_gpio = value;
-	if (value) {
+	if (value && nd->echo_phase == 1) {
 		nd->echo_start = now;
 		nd->last_ultra_rise_ns = ktime_to_ns(now);
 		nd->echo_phase = 2;
-	} else if (nd->echo_phase == 2) {
+	} else if (!value && nd->echo_phase == 2) {
 		s64 us = ktime_to_us(ktime_sub(now, nd->echo_start));
 		nd->last_ultra_fall_ns = ktime_to_ns(now);
-		if (us > 0)
+		if (us > 0 && us < 40000)   /* HC-SR04 max echo ~38ms */
 			new_distance = (int)us / 58;
 		nd->echo_phase = 3;
 	}
@@ -503,6 +515,7 @@ static irqreturn_t ultra_irq_handler(int irq, void *dev_id)
 	if (new_distance >= 0) {
 		spin_lock_irqsave(&nd->state_lock, flags);
 		nd->distance_cm = new_distance;
+		nd->distance_fresh = true;
 		spin_unlock_irqrestore(&nd->state_lock, flags);
 	}
 
