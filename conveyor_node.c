@@ -153,7 +153,7 @@ static int ultra_tolerance_cm = 2;
 module_param(ultra_tolerance_cm, int, 0644);
 MODULE_PARM_DESC(ultra_tolerance_cm, "Distance stability tolerance for blockage detection");
 
-static unsigned int blockage_confirm_count = 20; /* 20 × 200ms = 4s */
+static unsigned int blockage_confirm_count = 5; /* 5 × 200ms = 1s */
 module_param(blockage_confirm_count, uint, 0644);
 MODULE_PARM_DESC(blockage_confirm_count, "Consecutive blocked samples required");
 
