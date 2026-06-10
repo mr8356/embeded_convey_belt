@@ -81,11 +81,14 @@ download_and_push_debs() {
             echo "  fetch   $fname"
             # 1차: Pi가 알려준 원본 URI
             if ! curl -sSfL --retry 2 --connect-timeout 10 "$uri" -o "$dest" 2>/dev/null; then
-                # 2차: archive.debian.org (Debian 표준 패키지)
-                local pkg_prefix="${fname%%_*}"
-                local alt1="https://archive.debian.org/debian/pool/main/${pkg_prefix:0:1}/${pkg_prefix}/${fname}"
+                # pool/ 이후 경로 추출 — 소스 패키지 기반 디렉터리 구조 보존
+                # 예) .../raspbian/pool/main/l/libev/libev4_...deb
+                #                  → pool/main/l/libev/libev4_...deb
+                local pool_path="pool/${uri#*pool/}"
+                # 2차: archive.debian.org
+                local alt1="https://archive.debian.org/debian/${pool_path}"
                 # 3차: archive.raspbian.org
-                local alt2="http://archive.raspbian.org/raspbian/pool/main/${pkg_prefix:0:1}/${pkg_prefix}/${fname}"
+                local alt2="http://archive.raspbian.org/raspbian/${pool_path}"
                 echo "  retry   $alt1"
                 if ! curl -sSfL --retry 2 --connect-timeout 10 "$alt1" -o "$dest" 2>/dev/null; then
                     echo "  retry   $alt2"
