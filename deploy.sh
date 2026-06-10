@@ -16,9 +16,11 @@ DRIVER_DIR="~/conveyor_node_driver"
 BROKER_DIR="~/conveyor_broker"
 MQTT_TOPIC="iot/conveyor/state"
 PKGS_DIR="$(dirname "$0")/.deb_cache"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-ssh_q()  { ssh -o BatchMode=yes -o ConnectTimeout=5 "$@"; }
-scp_q()  { scp -o BatchMode=yes -o ConnectTimeout=5 "$@"; }
+_SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=5 -o LogLevel=ERROR)
+ssh_q()  { ssh  "${_SSH_OPTS[@]}" "$@"; }
+scp_q()  { scp -o BatchMode=yes -o ConnectTimeout=5 -o LogLevel=ERROR "$@"; }
 remote() { local host=$1; shift; ssh_q "$host" "$@"; }
 
 # ── helpers ────────────────────────────────────────────────────────────────────
@@ -29,100 +31,88 @@ check_connectivity() {
     ssh_q "$BROKER_PI" "echo broker-pi ok" || { echo "ERROR: cannot reach $BROKER_PI"; exit 1; }
 }
 
-detect_arch() {
-    local host=$1
-    remote "$host" "dpkg --print-architecture 2>/dev/null || uname -m"
+is_installed() {
+    local host=$1 pkg=$2
+    remote "$host" "dpkg -l '$pkg' 2>/dev/null | grep -q '^ii'" 2>/dev/null
 }
 
-# Download mosquitto + mosquitto-clients .deb files on the Mac for the given
-# Debian/Raspbian architecture, then SCP them to the target Pi for dpkg install.
+detect_arch() {
+    remote "$1" "dpkg --print-architecture 2>/dev/null || echo arm64"
+}
+
+detect_codename() {
+    remote "$1" "lsb_release -cs 2>/dev/null || \
+        grep -oP '(?<=VERSION_CODENAME=).+' /etc/os-release 2>/dev/null || \
+        echo bookworm"
+}
+
+# Mac에서 .deb와 의존성 전부 내려받아 Pi에 SCP 후 dpkg 설치
 download_and_push_debs() {
-    local host=$1
-    local arch=$2
-    mkdir -p "$PKGS_DIR/$arch"
+    local host=$1 arch=$2 codename=$3
+    shift 3
+    local pkgs=("$@")       # 설치할 패키지 목록
 
-    echo "  downloading mosquitto packages for $arch (Debian Bookworm) ..."
+    local outdir="$PKGS_DIR/${arch}-${codename}"
+    mkdir -p "$outdir"
 
-    # Resolve current package URLs from Debian package index
-    local base="http://deb.debian.org/debian/dists/bookworm/main"
-    local pkgs_file="$PKGS_DIR/$arch/Packages.gz"
+    echo "  Mac에서 .deb 내려받는 중 (arch=$arch, codename=$codename) ..."
+    local deb_files
+    deb_files=$(python3 "$SCRIPT_DIR/scripts/fetch_debs.py" \
+        --arch "$arch" \
+        --codename "$codename" \
+        --packages "${pkgs[@]}" \
+        --outdir "$outdir") || {
+            echo "ERROR: fetch_debs.py 실패 — scripts/fetch_debs.py 확인 필요"
+            exit 1
+        }
 
-    if [[ ! -f "$pkgs_file" ]]; then
-        curl -sSL "${base}/binary-${arch}/Packages.gz" -o "$pkgs_file"
+    if [[ -z "$deb_files" ]]; then
+        echo "ERROR: 다운로드된 .deb 없음"
+        exit 1
     fi
 
-    # Extract .deb pool paths for mosquitto and mosquitto-clients
-    for pkg in mosquitto mosquitto-clients; do
-        local deb_path
-        deb_path=$(zcat "$pkgs_file" | awk -v p="^Package: ${pkg}$" '
-            $0 ~ p { found=1 }
-            found && /^Filename:/ { print $2; found=0 }
-        ' | head -1)
-
-        if [[ -z "$deb_path" ]]; then
-            echo "  WARNING: could not find $pkg in Packages index"
-            continue
-        fi
-
-        local filename
-        filename=$(basename "$deb_path")
-        local local_deb="$PKGS_DIR/$arch/$filename"
-
-        if [[ ! -f "$local_deb" ]]; then
-            echo "  fetching $filename ..."
-            curl -sSL "http://deb.debian.org/debian/${deb_path}" -o "$local_deb"
-        else
-            echo "  cached: $filename"
-        fi
-    done
-
-    # Also grab libmosquitto1 (runtime dependency)
-    for pkg in libmosquitto1; do
-        local deb_path
-        deb_path=$(zcat "$pkgs_file" | awk -v p="^Package: ${pkg}$" '
-            $0 ~ p { found=1 }
-            found && /^Filename:/ { print $2; found=0 }
-        ' | head -1)
-        if [[ -n "$deb_path" ]]; then
-            local filename; filename=$(basename "$deb_path")
-            local local_deb="$PKGS_DIR/$arch/$filename"
-            [[ -f "$local_deb" ]] || curl -sSL "http://deb.debian.org/debian/${deb_path}" -o "$local_deb"
-        fi
-    done
-
-    echo "  transferring .deb files to $host ..."
-    remote "$host" "mkdir -p /tmp/mosquitto_debs"
-    scp_q "$PKGS_DIR/$arch/"*.deb "${host}:/tmp/mosquitto_debs/"
-    remote "$host" "sudo dpkg -i /tmp/mosquitto_debs/*.deb || sudo apt-get install -f -y"
-    echo "  mosquitto installed offline."
+    echo "  Pi로 전송 중 ..."
+    remote "$host" "mkdir -p /tmp/conveyor_debs && rm -f /tmp/conveyor_debs/*.deb"
+    # shellcheck disable=SC2086
+    scp_q $deb_files "${host}:/tmp/conveyor_debs/"
+    remote "$host" "sudo dpkg -i /tmp/conveyor_debs/*.deb"
+    echo "  오프라인 설치 완료."
 }
 
-install_mosquitto_if_needed() {
+install_if_needed() {
     local host=$1
-    local pkgs=$2   # "mosquitto mosquitto-clients" or "mosquitto-clients"
-    echo "==> checking mosquitto on $host"
+    shift
+    local pkgs=("$@")
+    local primary="${pkgs[0]}"
 
-    local need_install=0
-    for p in $pkgs; do
-        if ! remote "$host" "dpkg -s $p &>/dev/null"; then
-            need_install=1
-            break
-        fi
-    done
+    echo "==> $host 에서 ${pkgs[*]} 확인 중"
 
-    if [[ $need_install -eq 0 ]]; then
-        echo "  already installed."
+    if is_installed "$host" "$primary"; then
+        echo "  이미 설치됨."
         return 0
     fi
 
-    # Try apt from local cache first (no internet needed if cache exists)
-    echo "  trying apt from local cache ..."
-    if remote "$host" "sudo apt-get install -y --no-install-recommends $pkgs 2>&1" | grep -q "Unable to fetch"; then
-        echo "  apt cache miss — falling back to offline .deb transfer ..."
-        local arch
-        arch=$(detect_arch "$host")
-        download_and_push_debs "$host" "$arch"
+    # 1차 시도: apt (로컬 캐시에 있으면 인터넷 없이도 됨)
+    echo "  apt 시도 중 ..."
+    remote "$host" "sudo apt-get install -y --no-install-recommends ${pkgs[*]}" 2>/dev/null || true
+
+    if is_installed "$host" "$primary"; then
+        echo "  apt 설치 성공."
+        return 0
     fi
+
+    # 2차 시도: Mac에서 .deb 직접 다운로드 → SCP → dpkg
+    echo "  apt 실패 — Mac에서 오프라인 설치 진행 ..."
+    local arch codename
+    arch=$(detect_arch "$host")
+    codename=$(detect_codename "$host")
+    download_and_push_debs "$host" "$arch" "$codename" "${pkgs[@]}"
+
+    if ! is_installed "$host" "$primary"; then
+        echo "ERROR: $primary 설치 실패"
+        exit 1
+    fi
+    echo "  설치 완료."
 }
 
 # ── broker Pi (10.10.11.12) setup ──────────────────────────────────────────────
@@ -131,7 +121,7 @@ setup_broker() {
     echo ""
     echo "==> setting up MQTT broker on $BROKER_PI"
 
-    install_mosquitto_if_needed "$BROKER_PI" "mosquitto mosquitto-clients"
+    install_if_needed "$BROKER_PI" mosquitto mosquitto-clients
 
     remote "$BROKER_PI" "mkdir -p $BROKER_DIR"
     scp_q broker/mosquitto.conf          "${BROKER_PI}:${BROKER_DIR}/"
@@ -207,7 +197,7 @@ setup_driver() {
     echo ""
     echo "==> setting up event publisher on $DRIVER_PI"
 
-    install_mosquitto_if_needed "$DRIVER_PI" "mosquitto-clients"
+    install_if_needed "$DRIVER_PI" mosquitto-clients
 
     remote "$DRIVER_PI" "mkdir -p $DRIVER_DIR"
     scp_q conveyor_event_daemon.py "${DRIVER_PI}:${DRIVER_DIR}/"
