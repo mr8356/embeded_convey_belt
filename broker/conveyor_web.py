@@ -8,6 +8,8 @@ Usage:
     python3 conveyor_web.py [--broker 192.168.106.203] [--topic iot/conveyor/#] [--port 8080]
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import queue

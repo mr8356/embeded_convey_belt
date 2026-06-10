@@ -13,8 +13,8 @@ set -euo pipefail
 BROKER_IP="${BROKER_IP:-192.168.106.203}"
 DRIVER_PI="${DRIVER_PI:-pi@10.10.10.12}"
 SUBSCRIBER_PI="${SUBSCRIBER_PI:-pi@10.10.11.12}"
-DRIVER_DIR="~/conveyor_node_driver"
-SUBSCRIBER_DIR="~/conveyor_broker"
+DRIVER_DIR="/home/pi/conveyor_node_driver"
+SUBSCRIBER_DIR="/home/pi/conveyor_broker"
 MQTT_TOPIC="iot/conveyor/state"
 MQTT_PORT=1883
 
@@ -105,8 +105,9 @@ EOF
         sudo systemctl daemon-reload
         sudo systemctl enable conveyor-publisher
         sudo systemctl restart conveyor-publisher
-        sleep 1
-        sudo systemctl is-active conveyor-publisher && echo 'publisher running OK'
+        sleep 2
+        st=\$(sudo systemctl is-active conveyor-publisher 2>/dev/null || true)
+        echo \"publisher status: \$st\"
     "
 }
 
@@ -164,9 +165,11 @@ EOF
         sudo systemctl daemon-reload
         sudo systemctl enable conveyor-subscriber conveyor-web
         sudo systemctl restart conveyor-subscriber conveyor-web
-        sleep 1
-        sudo systemctl is-active conveyor-subscriber && echo 'subscriber running OK'
-        sudo systemctl is-active conveyor-web        && echo 'web UI running OK'
+        sleep 2
+        st_sub=\$(sudo systemctl is-active conveyor-subscriber 2>/dev/null || true)
+        st_web=\$(sudo systemctl is-active conveyor-web        2>/dev/null || true)
+        echo \"subscriber status: \$st_sub\"
+        echo \"web UI status:     \$st_web\"
     "
 }
 

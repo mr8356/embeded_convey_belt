@@ -7,6 +7,8 @@ Maintains a persistent TCP connection to the broker.
 Usage:
     python3 conveyor_event_daemon.py [--broker 192.168.106.203] [--topic iot/conveyor/state]
 """
+from __future__ import annotations
+
 import argparse
 import json
 import socket

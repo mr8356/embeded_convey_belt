@@ -7,6 +7,8 @@ Subscribes to the Mac broker and pretty-prints state changes.
 Usage:
     python3 conveyor_subscriber.py [--broker 192.168.106.203] [--topic iot/conveyor/#]
 """
+from __future__ import annotations
+
 import argparse
 import json
 import socket
