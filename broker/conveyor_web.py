@@ -2,16 +2,17 @@
 """
 Conveyor event web dashboard — pure Python stdlib.
 Real-time updates via Server-Sent Events (SSE).
-No external dependencies beyond mosquitto_sub CLI.
+No external dependencies — pure Python MQTT client (no mosquitto_sub needed).
 
 Usage:
-    python3 conveyor_web.py [--broker localhost] [--topic iot/conveyor/#] [--port 8080]
+    python3 conveyor_web.py [--broker 192.168.106.203] [--topic iot/conveyor/#] [--port 8080]
 """
 
 import argparse
 import json
 import queue
-import subprocess
+import socket
+import struct
 import sys
 import threading
 import time
@@ -44,33 +45,88 @@ def _broadcast(ev: dict) -> None:
             _clients.remove(q)
 
 
+# ── pure Python MQTT subscribe helpers ────────────────────────────────────────
+
+def _enc_str(s: str) -> bytes:
+    b = s.encode()
+    return struct.pack("!H", len(b)) + b
+
+def _enc_remlen(n: int) -> bytes:
+    out = []
+    while True:
+        byte = n & 0x7F
+        n >>= 7
+        out.append(byte | (0x80 if n else 0))
+        if not n:
+            return bytes(out)
+
+def _recvn(sock: socket.socket, n: int) -> bytes:
+    buf = b""
+    while len(buf) < n:
+        chunk = sock.recv(n - len(buf))
+        if not chunk:
+            raise EOFError("broker closed")
+        buf += chunk
+    return buf
+
+def _read_remlen(sock: socket.socket) -> int:
+    val = mul = 0
+    for _ in range(4):
+        b = _recvn(sock, 1)[0]
+        val += (b & 0x7F) * (128 ** mul)
+        mul += 1
+        if not (b & 0x80):
+            return val
+    raise RuntimeError("malformed remaining-length")
+
+
 # ── MQTT reader thread ─────────────────────────────────────────────────────────
 
 def _mqtt_reader(broker: str, topic: str) -> None:
-    cmd = ["mosquitto_sub", "-h", broker, "-t", topic, "-v"]
     while True:
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
-            for raw in proc.stdout:
-                parts = raw.strip().split(" ", 1)
-                if len(parts) != 2:
-                    continue
+            sock = socket.create_connection((broker, 1883), timeout=10)
+
+            cid = _enc_str("conveyor-web")
+            proto = _enc_str("MQTT") + bytes([4, 2, 0, 60])
+            body = proto + cid
+            sock.sendall(bytes([0x10]) + _enc_remlen(len(body)) + body)
+            ack = _recvn(sock, 4)
+            if ack[0] != 0x20 or ack[3] != 0:
+                raise RuntimeError(f"CONNACK refused rc={ack[3]}")
+
+            sub_payload = struct.pack("!H", 1) + _enc_str(topic) + bytes([0])
+            sock.sendall(bytes([0x82]) + _enc_remlen(len(sub_payload)) + sub_payload)
+            _recvn(sock, 5)   # SUBACK
+
+            print(f"web: connected to {broker}, subscribed: {topic}", flush=True)
+            sock.settimeout(60)
+
+            while True:
                 try:
-                    ev = json.loads(parts[1])
-                except json.JSONDecodeError:
-                    continue
-                ev["_wall"] = time.strftime("%H:%M:%S", time.localtime(ev.get("created_at", time.time())))
-                with _state_lock:
-                    _current.clear()
-                    _current.update(ev)
-                    _history.appendleft(ev)
-                _broadcast(ev)
-            proc.wait()
-        except FileNotFoundError:
-            print("ERROR: mosquitto_sub not found — install mosquitto-clients", file=sys.stderr)
-            return
+                    pkt_type = _recvn(sock, 1)[0] & 0xF0
+                    rem = _read_remlen(sock)
+                    data = _recvn(sock, rem) if rem else b""
+
+                    if pkt_type == 0x30:   # PUBLISH
+                        tlen = struct.unpack("!H", data[:2])[0]
+                        payload = data[2 + tlen:].decode()
+                        try:
+                            ev = json.loads(payload)
+                        except json.JSONDecodeError:
+                            continue
+                        ev["_wall"] = time.strftime("%H:%M:%S", time.localtime(
+                            ev.get("created_at", time.time())))
+                        with _state_lock:
+                            _current.clear()
+                            _current.update(ev)
+                            _history.appendleft(ev)
+                        _broadcast(ev)
+                except socket.timeout:
+                    sock.sendall(bytes([0xC0, 0x00]))   # PINGREQ
+
         except Exception as exc:
-            print(f"mqtt reader error: {exc}", file=sys.stderr)
+            print(f"web mqtt error: {exc} — retry in 5s", file=sys.stderr)
         time.sleep(5)
 
 
