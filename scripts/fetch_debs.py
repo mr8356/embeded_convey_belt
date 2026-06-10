@@ -29,7 +29,7 @@ _BASE_PKGS = {
     "libnettle8", "libp11-kit0", "libpam-modules", "libpam-modules-bin",
     "libpam-runtime", "libpam0g", "libpcre2-8-0", "libpcre3",
     "libseccomp2", "libselinux1", "libsepol2", "libsmartcols1",
-    "libss2", "libssl3", "libstdc++6", "libsystemd0", "libtasn1-6",
+    "libss2", "libssl3", "libssl1.1", "libssl1.0.2", "libstdc++6", "libsystemd0", "libtasn1-6",
     "libtinfo6", "libudev1", "libunistring2", "libuuid1", "libxxhash0",
     "libzstd1", "login", "logsave", "lsb-base", "mawk", "mount",
     "ncurses-base", "ncurses-bin", "openssl", "passwd", "perl-base",
@@ -39,10 +39,12 @@ _BASE_PKGS = {
 
 _MIRRORS = {
     # (arch, codename) → (base_url, suite, component)
-    ("arm64",  "bookworm"): ("http://deb.debian.org/debian/",  "bookworm", "main"),
-    ("arm64",  "bullseye"): ("http://deb.debian.org/debian/",  "bullseye", "main"),
-    ("armhf",  "bookworm"): ("http://deb.debian.org/debian/",  "bookworm", "main"),
-    ("armhf",  "bullseye"): ("http://deb.debian.org/debian/",  "bullseye", "main"),
+    ("arm64",  "bookworm"): ("http://deb.debian.org/debian/",             "bookworm", "main"),
+    ("arm64",  "bullseye"): ("http://deb.debian.org/debian/",             "bullseye", "main"),
+    ("arm64",  "buster"):   ("http://deb.debian.org/debian/",             "buster",   "main"),
+    ("armhf",  "bookworm"): ("http://deb.debian.org/debian/",             "bookworm", "main"),
+    ("armhf",  "bullseye"): ("http://deb.debian.org/debian/",             "bullseye", "main"),
+    ("armhf",  "buster"):   ("http://raspbian.raspberrypi.org/raspbian/", "buster",   "main"),
 }
 
 
