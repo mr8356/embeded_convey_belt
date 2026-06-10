@@ -519,9 +519,6 @@ static irqreturn_t ultra_irq_handler(int irq, void *dev_id)
 		spin_unlock_irqrestore(&nd->state_lock, flags);
 	}
 
-	if (!value)
-		schedule_work(&nd->fusion_work);
-
 	return IRQ_HANDLED;
 }
 
